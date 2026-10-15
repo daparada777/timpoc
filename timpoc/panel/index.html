@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>timpoc — субтитры</title>
+  <!--
+    timpoc — панель внутри After Effects (CEP).
+
+    Оформление: тёмная основа + фиолетово-розовые градиенты + полупрозрачное
+    «стекло». Важно: размытие фона (backdrop-filter) поддерживается не везде —
+    в CEP на старом Chromium его может не быть. Поэтому у каждого стеклянного
+    элемента есть запасной вариант: полупрозрачный фон без размытия. Интерфейс
+    остаётся аккуратным в любом случае (требование «если эффект не
+    поддерживается — используй аккуратную альтернативу»).
+
+    Упрощённый режим эффектов включается классом .fx-reduced на <html>,
+    полное отключение — .fx-off (см. css/timpoc.css).
+  -->
+  <link rel="stylesheet" href="css/timpoc.css" />
+  <script src="js/lib/CSInterface.js"></script>
+</head>
+<body>
+  <div class="tp-root" id="root">
+
+    <!-- ============================ ШАПКА ============================ -->
+    <header class="tp-header">
+      <div class="tp-logo">
+        <span class="tp-logo-mark" aria-hidden="true"></span>
+        <span class="tp-logo-text">timpoc</span>
+      </div>
+      <div class="tp-header-status">
+        <span class="tp-dot" id="engineDot" title="Состояние движка распознавания"></span>
+        <span class="tp-status-text" id="engineStatus">подключение…</span>
+      </div>
+    </header>
+
+    <!-- ============================ ВКЛАДКИ ============================ -->
+    <nav class="tp-tabs" role="tablist" aria-label="Разделы">
+      <button class="tp-tab is-active" data-tab="subtitles" role="tab" aria-selected="true">Субтитры</button>
+      <button class="tp-tab" data-tab="style" role="tab" aria-selected="false">Оформление</button>
+      <button class="tp-tab" data-tab="layout" role="tab" aria-selected="false">Расположение</button>
+      <button class="tp-tab" data-tab="presets" role="tab" aria-selected="false">Пресеты</button>
+      <button class="tp-tab" data-tab="settings" role="tab" aria-selected="false">Настройки</button>
+    </nav>
+
+    <!-- ======================= ЛЕНТА ПРЕДУПРЕЖДЕНИЙ ======================= -->
+    <div class="tp-alerts" id="alerts" hidden></div>
+
+    <!-- ============================ КОНТЕНТ ============================ -->
+    <main class="tp-main">
+
+      <!-- ------------------------- СУБТИТРЫ ------------------------- -->
+      <section class="tp-panel is-active" id="tab-subtitles" role="tabpanel">
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Источник звука</h2>
+
+          <label class="tp-field">
+            <span class="tp-label">Что распознавать</span>
+            <select id="sourceKind" class="tp-select">
+              <option value="comp">Звук композиции (рабочая область)</option>
+              <option value="layer">Звуковая дорожка слоя</option>
+              <option value="file">Отдельный аудиофайл</option>
+            </select>
+          </label>
+
+          <label class="tp-field" id="layerField" hidden>
+            <span class="tp-label">Слой со звуком</span>
+            <select id="sourceLayer" class="tp-select"></select>
+          </label>
+
+          <label class="tp-field" id="fileField" hidden>
+            <span class="tp-label">Путь к аудиофайлу</span>
+            <input id="sourcePath" class="tp-input" type="text" placeholder="C:\…\звук.wav" spellcheck="false" />
+            <span class="tp-hint">Пути с пробелами и кириллицей поддерживаются.</span>
+          </label>
+
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Начало, с</span>
+              <input id="rangeStart" class="tp-input" type="number" step="0.1" value="0" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Конец, с</span>
+              <input id="rangeEnd" class="tp-input" type="number" step="0.1" placeholder="до конца" />
+            </label>
+          </div>
+
+          <div class="tp-meta" id="sourceMeta"></div>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Распознавание</h2>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Язык</span>
+              <select id="language" class="tp-select">
+                <option value="ru">Русский</option>
+                <option value="en">Английский</option>
+                <option value="auto">Определить автоматически</option>
+              </select>
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Модель</span>
+              <select id="model" class="tp-select"></select>
+            </label>
+          </div>
+          <div class="tp-meta" id="modelHint"></div>
+
+          <div class="tp-progress" id="progressWrap" hidden>
+            <div class="tp-progress-bar"><div class="tp-progress-fill" id="progressFill"></div></div>
+            <div class="tp-progress-text" id="progressText"></div>
+          </div>
+
+          <div class="tp-actions">
+            <button class="tp-btn tp-btn--primary" id="btnCreate">Создать субтитры</button>
+            <button class="tp-btn" id="btnCancel" hidden>Отменить</button>
+          </div>
+        </div>
+
+        <div class="tp-card" id="blocksCard" hidden>
+          <h2 class="tp-card-title">
+            Редактор
+            <span class="tp-badge" id="blocksCount">0</span>
+          </h2>
+
+          <div class="tp-row tp-row--tight">
+            <label class="tp-field tp-field--third">
+              <span class="tp-label">Слов в блоке</span>
+              <input id="maxWords" class="tp-input" type="number" min="1" max="30" value="8" />
+            </label>
+            <label class="tp-field tp-field--third">
+              <span class="tp-label">Символов</span>
+              <input id="maxChars" class="tp-input" type="number" min="8" max="200" value="42" />
+            </label>
+            <label class="tp-field tp-field--third">
+              <span class="tp-label">Строк</span>
+              <input id="maxLines" class="tp-input" type="number" min="1" max="6" value="2" />
+            </label>
+          </div>
+
+          <div class="tp-row tp-row--tight">
+            <button class="tp-btn tp-btn--small" id="btnResegment">Пересобрать фразы</button>
+            <label class="tp-field tp-field--shift">
+              <span class="tp-label">Сдвиг, с</span>
+              <input id="shiftSeconds" class="tp-input" type="number" step="0.1" value="0" />
+            </label>
+            <button class="tp-btn tp-btn--small" id="btnShift">Сдвинуть</button>
+          </div>
+          <span class="tp-hint">Пересборка и сдвиг не запускают распознавание заново.</span>
+
+          <div class="tp-blocks" id="blocksList"></div>
+        </div>
+      </section>
+
+      <!-- ------------------------- ОФОРМЛЕНИЕ ------------------------- -->
+      <section class="tp-panel" id="tab-style" role="tabpanel">
+
+        <div class="tp-preview" id="previewStage">
+          <div class="tp-preview-frame" id="previewFrame">
+            <div class="tp-preview-safe" id="previewSafe" hidden></div>
+            <div class="tp-preview-box" id="previewBox"></div>
+            <div class="tp-preview-text" id="previewText">Пример субтитра<br />вторая строка</div>
+          </div>
+          <div class="tp-preview-toolbar">
+            <select id="previewAspect" class="tp-select tp-select--small">
+              <option value="comp">Композиция</option>
+              <option value="9:16">9:16</option>
+              <option value="16:9">16:9</option>
+              <option value="1:1">1:1</option>
+              <option value="4:5">4:5</option>
+              <option value="custom">Своё</option>
+            </select>
+            <span class="tp-hint" id="previewHint"></span>
+          </div>
+          <div class="tp-preview-warn" id="previewWarn" hidden></div>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Текст</h2>
+          <label class="tp-field">
+            <span class="tp-label">Шрифт</span>
+            <select id="fontFamily" class="tp-select"></select>
+          </label>
+          <div class="tp-font-warn" id="fontWarn" hidden></div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Начертание</span>
+              <select id="fontStyle" class="tp-select"></select>
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Размер</span>
+              <input id="fontSize" class="tp-input" type="number" min="6" max="400" value="64" />
+            </label>
+          </div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Цвет</span>
+              <input id="fontColor" class="tp-color" type="color" value="#ffffff" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Непрозрачность <b id="opacityVal">100%</b></span>
+              <input id="opacity" class="tp-range" type="range" min="0" max="100" value="100" />
+            </label>
+          </div>
+          <label class="tp-field">
+            <span class="tp-label">Регистр</span>
+            <select id="caseMode" class="tp-select">
+              <option value="none">Как в тексте</option>
+              <option value="upper">ПРОПИСНЫЕ</option>
+              <option value="lower">строчные</option>
+              <option value="title">Первая Заглавная</option>
+              <option value="caps">КАПС + трекинг</option>
+            </select>
+          </label>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Трекинг <b id="trackingVal">0</b></span>
+              <input id="tracking" class="tp-range" type="range" min="-100" max="300" value="0" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Интерлиньяж <b id="lineHeightVal">1.25</b></span>
+              <input id="lineHeight" class="tp-range" type="range" min="60" max="250" value="125" />
+            </label>
+          </div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Выравнивание в блоке</span>
+              <select id="textAlign" class="tp-select">
+                <option value="left">Слева</option>
+                <option value="center" selected>По центру</option>
+                <option value="right">Справа</option>
+              </select>
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Ширина блока</span>
+              <input id="boxWidth" class="tp-input" type="number" min="40" max="4000" value="900" />
+            </label>
+          </div>
+          <span class="tp-hint">Расположение блока на экране задаётся во вкладке «Расположение» — это разные настройки.</span>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">
+            <label class="tp-switch"><input type="checkbox" id="strokeEnabled" checked /><span></span></label>
+            Обводка
+          </h2>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Цвет</span>
+              <input id="strokeColor" class="tp-color" type="color" value="#000000" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Толщина <b id="strokeWidthVal">6</b></span>
+              <input id="strokeWidth" class="tp-range" type="range" min="0" max="60" value="6" />
+            </label>
+          </div>
+          <label class="tp-field">
+            <span class="tp-label">Непрозрачность <b id="strokeOpacityVal">100%</b></span>
+            <input id="strokeOpacity" class="tp-range" type="range" min="0" max="100" value="100" />
+          </label>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">
+            <label class="tp-switch"><input type="checkbox" id="shadowEnabled" checked /><span></span></label>
+            Тень
+          </h2>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Цвет</span>
+              <input id="shadowColor" class="tp-color" type="color" value="#000000" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Непрозрачность <b id="shadowOpacityVal">55%</b></span>
+              <input id="shadowOpacity" class="tp-range" type="range" min="0" max="100" value="55" />
+            </label>
+          </div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Смещение <b id="shadowDistanceVal">6</b></span>
+              <input id="shadowDistance" class="tp-range" type="range" min="0" max="80" value="6" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Размытие <b id="shadowSoftnessVal">8</b></span>
+              <input id="shadowSoftness" class="tp-range" type="range" min="0" max="120" value="8" />
+            </label>
+          </div>
+          <label class="tp-field">
+            <span class="tp-label">Направление <b id="shadowDirectionVal">135°</b></span>
+            <input id="shadowDirection" class="tp-range" type="range" min="0" max="359" value="135" />
+          </label>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">
+            <label class="tp-switch"><input type="checkbox" id="boxEnabled" /><span></span></label>
+            Подложка
+          </h2>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Цвет</span>
+              <input id="boxColor" class="tp-color" type="color" value="#000000" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Непрозрачность <b id="boxOpacityVal">55%</b></span>
+              <input id="boxOpacity" class="tp-range" type="range" min="0" max="100" value="55" />
+            </label>
+          </div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Отступ по X <b id="boxPadXVal">24</b></span>
+              <input id="boxPadX" class="tp-range" type="range" min="0" max="120" value="24" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Отступ по Y <b id="boxPadYVal">12</b></span>
+              <input id="boxPadY" class="tp-range" type="range" min="0" max="80" value="12" />
+            </label>
+          </div>
+          <label class="tp-field">
+            <span class="tp-label">Скругление углов <b id="boxRadiusVal">14</b></span>
+            <input id="boxRadius" class="tp-range" type="range" min="0" max="120" value="14" />
+          </label>
+          <label class="tp-check">
+            <input type="checkbox" id="boxUseExpression" checked />
+            <span>Авто-размер по тексту (экспрешен sourceRectAtTime)</span>
+          </label>
+          <span class="tp-hint">Подложка в After Effects — отдельный сплошной слой. Без экспрешена она не повторяет длину текста.</span>
+        </div>
+
+        <div class="tp-actions tp-actions--sticky">
+          <button class="tp-btn tp-btn--primary" id="btnApply">Применить</button>
+          <button class="tp-btn" id="btnRestyle">Обновить оформление</button>
+        </div>
+      </section>
+
+      <!-- ------------------------- РАСПОЛОЖЕНИЕ ------------------------- -->
+      <section class="tp-panel" id="tab-layout" role="tabpanel">
+        <div class="tp-card">
+          <h2 class="tp-card-title">Вертикальная позиция</h2>
+          <div class="tp-vslots" role="group" aria-label="Вертикальная позиция">
+            <button class="tp-vslot" data-vslot="1" title="Вверху">1</button>
+            <button class="tp-vslot" data-vslot="2" title="Между верхом и центром">2</button>
+            <button class="tp-vslot is-active" data-vslot="3" title="По центру">3</button>
+            <button class="tp-vslot" data-vslot="4" title="Между центром и низом">4</button>
+            <button class="tp-vslot" data-vslot="5" title="Внизу">5</button>
+          </div>
+          <span class="tp-hint">1 — вверху, 3 — по центру, 5 — внизу.</span>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Горизонталь</h2>
+          <div class="tp-hslots" role="group" aria-label="Горизонтальное расположение">
+            <button class="tp-hslot" data-hslot="left">Слева</button>
+            <button class="tp-hslot is-active" data-hslot="center">По центру</button>
+            <button class="tp-hslot" data-hslot="right">Справа</button>
+          </div>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Отступы и координаты</h2>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Сверху</span>
+              <input id="marginTop" class="tp-input" type="number" min="0" value="60" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Снизу</span>
+              <input id="marginBottom" class="tp-input" type="number" min="0" value="90" />
+            </label>
+          </div>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Слева</span>
+              <input id="marginLeft" class="tp-input" type="number" min="0" value="60" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Справа</span>
+              <input id="marginRight" class="tp-input" type="number" min="0" value="60" />
+            </label>
+          </div>
+          <label class="tp-check">
+            <input type="checkbox" id="useExact" />
+            <span>Точные координаты</span>
+          </label>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">X</span>
+              <input id="exactX" class="tp-input" type="number" step="1" value="0" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Y</span>
+              <input id="exactY" class="tp-input" type="number" step="1" value="0" />
+            </label>
+          </div>
+          <span class="tp-hint">Блок можно перетащить мышью в предпросмотре на вкладке «Оформление».</span>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Безопасные зоны</h2>
+          <label class="tp-check">
+            <input type="checkbox" id="safeEnabled" checked />
+            <span>Показывать и учитывать</span>
+          </label>
+          <div class="tp-row">
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Верх/низ, %</span>
+              <input id="safeTB" class="tp-input" type="number" min="0" max="40" value="10" />
+            </label>
+            <label class="tp-field tp-field--half">
+              <span class="tp-label">Лево/право, %</span>
+              <input id="safeLR" class="tp-input" type="number" min="0" max="40" value="5" />
+            </label>
+          </div>
+          <div class="tp-actions">
+            <button class="tp-btn tp-btn--small" id="btnFit">Вписать в кадр</button>
+          </div>
+          <div class="tp-preview-warn" id="layoutWarn" hidden></div>
+        </div>
+      </section>
+
+      <!-- ------------------------- ПРЕСЕТЫ ------------------------- -->
+      <section class="tp-panel" id="tab-presets" role="tabpanel">
+        <div class="tp-card">
+          <h2 class="tp-card-title">Пресеты оформления</h2>
+          <div class="tp-preset-list" id="presetList"></div>
+        </div>
+        <div class="tp-card">
+          <h2 class="tp-card-title">Свой пресет</h2>
+          <div class="tp-row">
+            <input id="presetName" class="tp-input" type="text" placeholder="Название" />
+            <button class="tp-btn tp-btn--small" id="btnSavePreset">Сохранить</button>
+          </div>
+          <span class="tp-hint">Пресеты хранятся в папке timpoc и не удаляются при обновлении.</span>
+        </div>
+      </section>
+
+      <!-- ------------------------- НАСТРОЙКИ ------------------------- -->
+      <section class="tp-panel" id="tab-settings" role="tabpanel">
+        <div class="tp-card">
+          <h2 class="tp-card-title">Движок распознавания</h2>
+          <div class="tp-meta" id="systemInfo">Загрузка сведений…</div>
+          <label class="tp-field">
+            <span class="tp-label">Устройство</span>
+            <select id="device" class="tp-select">
+              <option value="auto">Выбрать автоматически</option>
+              <option value="cpu">Процессор (CPU)</option>
+              <option value="cuda">Видеокарта (CUDA)</option>
+            </select>
+          </label>
+          <div class="tp-models" id="modelsList"></div>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Приватность</h2>
+          <label class="tp-check">
+            <input type="checkbox" id="offlineMode" />
+            <span>Автономный режим: полностью отключить сеть</span>
+          </label>
+          <span class="tp-hint">
+            Аудио обрабатывается на вашем компьютере и никуда не отправляется.
+            Интернет нужен только один раз — чтобы скачать модель, и только по вашему нажатию.
+          </span>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Интерфейс</h2>
+          <label class="tp-field">
+            <span class="tp-label">Эффекты</span>
+            <select id="effectsLevel" class="tp-select">
+              <option value="full">Полные (стекло, переливы)</option>
+              <option value="reduced">Упрощённые</option>
+              <option value="off">Выключены</option>
+            </select>
+          </label>
+          <label class="tp-check">
+            <input type="checkbox" id="reduceMotion" />
+            <span>Уменьшить анимации</span>
+          </label>
+        </div>
+
+        <div class="tp-card">
+          <h2 class="tp-card-title">Данные и журнал</h2>
+          <div class="tp-actions">
+            <button class="tp-btn tp-btn--small" id="btnExportSrt">Экспорт SRT</button>
+            <button class="tp-btn tp-btn--small" id="btnImportSrt">Импорт SRT</button>
+            <button class="tp-btn tp-btn--small" id="btnDiagnostics">Диагностика</button>
+          </div>
+          <pre class="tp-log" id="logBox" hidden></pre>
+          <div class="tp-actions">
+            <button class="tp-btn tp-btn--danger tp-btn--small" id="btnRemoveLayers">Удалить слои timpoc</button>
+          </div>
+          <span class="tp-hint">Удаляются только слои с меткой timpoc. Ваши слои не затрагиваются.</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/engine.js"></script>
+  <script src="js/bridge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

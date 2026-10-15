@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  timpoc — манифест CEP-панели.
+
+  ВАЖНО ПРО ВЕРСИИ (проверено по документации Adobe и сообществу):
+    * AE 2026 = внутренняя версия 26.x, CEP 12 (CSXS 12).
+    * UXP для After Effects на момент написания — только публичная бета
+      (Adobe обещает публичную бету к ноябрю 2026). Поэтому CEP — единственный
+      стабильный путь сегодня. Adobe гарантирует минимум два года от бетты UXP
+      до удаления CEP, CEP выключается по умолчанию в декабре 2028 и удаляется
+      в декабре 2029. Переход на UXP заложен в план, но не сейчас.
+    * В AE 2026 пункт меню называется «Window → Extensions» (без слова Legacy).
+
+  Node.js включён параметрами CEF — он нужен, чтобы панель могла:
+    * поднять/найти локальный процесс движка распознавания;
+    * читать runtime-файл с портом и токеном;
+    * открывать диалоги выбора файлов.
+  Без этих параметров панель осталась бы «чистым браузером» и не смогла бы
+  говорить с движком.
+-->
+<ExtensionManifest
+    Version="12.0"
+    ExtensionBundleId="com.timpoc.ae"
+    ExtensionBundleVersion="0.1.0"
+    ExtensionBundleName="timpoc"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <ExtensionList>
+    <Extension Id="com.timpoc.ae.panel" Version="0.1.0" />
+  </ExtensionList>
+
+  <ExecutionEnvironment>
+    <HostList>
+      <!-- 25.0 = AE 2025, 26.0 = AE 2026. Верхняя граница с запасом,
+           чтобы панель не переставала появляться после обновления AE. -->
+      <Host Name="AEFT" Version="[25.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="12.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+
+  <DispatchInfoList>
+    <Extension Id="com.timpoc.ae.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./host/timpoc_host.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+            <Parameter>--allow-file-access-from-files</Parameter>
+          </CEFCommandLine>
+        </Resources>
+
+        <Lifecycle>
+          <!-- Панель видна сразу при открытии, без «белого окна» -->
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+
+        <UI>
+          <Type>Panel</Type>
+          <Menu>timpoc — субтитры</Menu>
+          <Geometry>
+            <Size>
+              <Height>720</Height>
+              <Width>380</Width>
+            </Size>
+            <MaxSize>
+              <Height>2400</Height>
+              <Width>900</Width>
+            </MaxSize>
+            <MinSize>
+              <Height>360</Height>
+              <Width>300</Width>
+            </MinSize>
+          </Geometry>
+          <Icons />
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

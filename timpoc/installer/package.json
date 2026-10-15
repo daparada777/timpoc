@@ -1,0 +1,45 @@
+{
+  "name": "timpoc-installer",
+  "productName": "timpoc",
+  "version": "0.1.0",
+  "description": "Установщик timpoc — субтитры для Adobe After Effects",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "engine:win": "python -m PyInstaller ../engine/timpoc_engine.spec --distpath build/engine --workpath build/pyi --noconfirm"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.timpoc.installer",
+    "productName": "timpoc",
+    "files": ["src/**/*", "package.json"],
+    "extraResources": [
+      { "from": "resources/extension", "to": "extension" },
+      { "from": "resources/engine", "to": "engine", "filter": ["**/*"] }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "timpoc-setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "timpoc",
+      "uninstallDisplayName": "timpoc"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "category": "public.app-category.video",
+      "artifactName": "timpoc-${version}-${arch}.dmg"
+    }
+  }
+}
