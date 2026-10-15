@@ -1,0 +1,306 @@
+name: Собрать установщик timpoc
+
+# Запуск: вручную (вкладка Actions → «Run workflow») или тегом вида v0.1.0.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# ВАЖНО (исправление реального сбоя):
+# Windows-раннер отдаёт перенаправленный вывод в системной кодировке (cp1252),
+# а весь наш текст русский. Из-за этого падал и --help собранного exe, и любой
+# вывод в лог. PYTHONUTF8=1 включает UTF-8 везде, включая дочерние процессы.
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ================================================================= Windows
+  engine-windows:
+    name: Движок (engine.exe) — Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12, а не 3.11: для numpy 2.5 нет колёс под 3.11 на Windows,
+          # и pip тратит время на подбор старых версий (а иногда и падает).
+          python-version: "3.12"
+          cache: pip
+
+      - name: Поставить зависимости
+        working-directory: timpoc/engine
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller 2>&1 | tee pip.log
+
+      # Собираем exe только после того, как код прошёл тесты: упаковать
+      # сломанный движок — худший вариант, ошибка всплывёт у пользователя.
+      - name: Прогнать тесты
+        working-directory: timpoc/engine
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -m "not integration" 2>&1 | tee pytest.log
+
+      - name: Собрать engine.exe
+        working-directory: timpoc/engine
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m PyInstaller timpoc_engine.spec --noconfirm 2>&1 | tee pyinstaller.log
+
+      - name: Проверить, что exe запускается
+        working-directory: timpoc/engine
+        shell: bash
+        run: |
+          ./dist/timpoc-engine/timpoc-engine.exe --help
+          ./dist/timpoc-engine/timpoc-engine.exe models
+          ./dist/timpoc-engine/timpoc-engine.exe doctor
+
+      # Отчёт прямо на странице запуска: иначе причину сбоя видно только
+      # если открыть лог целиком и листать.
+      - name: Отчёт о сбое
+        if: failure()
+        working-directory: timpoc/engine
+        shell: bash
+        run: |
+          {
+            echo "## Сбой в задании «Движок»"
+            for f in pip.log pytest.log pyinstaller.log; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "### $f — последние 40 строк"
+                echo '```'
+                tail -40 "$f"
+                echo '```'
+              fi
+            done
+            echo ""
+            echo "### Собранные файлы"
+            ls -la dist/timpoc-engine 2>/dev/null || echo "папка dist не собрана"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Сохранить логи (даже при сбое)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-win-logs
+          path: |
+            timpoc/engine/pip.log
+            timpoc/engine/pytest.log
+            timpoc/engine/pyinstaller.log
+            timpoc/engine/build/pyi/**/warn-*.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Отдать собранный движок
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-win
+          path: timpoc/engine/dist/timpoc-engine
+          # Пустой артефакт — это провал, а не «успех с предупреждением».
+          if-no-files-found: error
+          retention-days: 30
+
+  installer-windows:
+    name: Установщик (timpoc-setup.exe) — Windows
+    runs-on: windows-latest
+    needs: engine-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Прогнать тесты установщика
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test test/ 2>&1 | tee installertests.log
+
+      # Логику запуска движка проверяем отдельно: именно она решает,
+      # заработает ли панель после установки.
+      - name: Прогнать тесты панели
+        working-directory: timpoc/panel
+        shell: bash
+        run: node --test test/
+
+      - name: Поставить зависимости
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee npm.log
+
+      - name: Подготовить панель
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          mkdir -p resources/extension
+          cp -R ../panel/. resources/extension/
+
+      - name: Забрать движок из предыдущего задания
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-win
+          path: timpoc/installer/resources/engine
+
+      - name: Проверить, что движок на месте
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          ls -la resources/engine | head -20
+          test -f resources/engine/timpoc-engine.exe || { echo "НЕТ resources/engine/timpoc-engine.exe"; exit 1; }
+
+      - name: Собрать установщик
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          set -o pipefail
+          npx electron-builder --win 2>&1 | tee build.log
+
+      - name: Отчёт о сбое
+        if: failure()
+        working-directory: timpoc/installer
+        shell: bash
+        run: |
+          {
+            echo "## Сбой в задании «Установщик (Windows)»"
+            for f in installertests.log npm.log build.log; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "### $f — последние 40 строк"
+                echo '```'
+                tail -40 "$f"
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Сохранить логи (даже при сбое)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-win-logs
+          path: |
+            timpoc/installer/installertests.log
+            timpoc/installer/npm.log
+            timpoc/installer/build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Отдать установщик
+        uses: actions/upload-artifact@v4
+        with:
+          name: timpoc-setup-windows
+          path: timpoc/installer/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # =================================================================== macOS
+  # Отдельное задание: PyInstaller не умеет собирать под другую систему,
+  # а macOS-раннер github сейчас на Apple Silicon — значит движок arm64.
+  engine-macos:
+    name: Движок — macOS (arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Поставить зависимости
+        working-directory: timpoc/engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Прогнать тесты
+        working-directory: timpoc/engine
+        run: python -m pytest -q -m "not integration"
+
+      - name: Собрать движок
+        working-directory: timpoc/engine
+        run: python -m PyInstaller timpoc_engine.spec --noconfirm
+
+      - name: Проверить, что движок запускается
+        working-directory: timpoc/engine
+        run: |
+          ./dist/timpoc-engine/timpoc-engine --help
+          ./dist/timpoc-engine/timpoc-engine models
+
+      - name: Отдать собранный движок
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-mac
+          path: timpoc/engine/dist/timpoc-engine
+          if-no-files-found: error
+          retention-days: 30
+
+  installer-macos:
+    name: Установщик (.dmg) — macOS
+    runs-on: macos-latest
+    needs: engine-macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Прогнать тесты установщика
+        working-directory: timpoc/installer
+        run: node --test test/
+
+      - name: Прогнать тесты панели
+        working-directory: timpoc/panel
+        run: node --test test/
+
+      - name: Поставить зависимости
+        working-directory: timpoc/installer
+        run: npm install --no-audit --no-fund
+
+      - name: Подготовить панель
+        working-directory: timpoc/installer
+        run: |
+          mkdir -p resources/extension
+          cp -R ../panel/. resources/extension/
+
+      - name: Забрать движок из предыдущего задания
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-mac
+          path: timpoc/installer/resources/engine
+
+      - name: Проверить, что движок на месте
+        working-directory: timpoc/installer
+        run: |
+          ls -la resources/engine | head -20
+          test -f resources/engine/timpoc-engine || { echo "НЕТ resources/engine/timpoc-engine"; exit 1; }
+
+      - name: Собрать .dmg
+        working-directory: timpoc/installer
+        env:
+          # Сертификата разработчика у нас нет: явно говорим сборщику не искать
+          # его и не падать на подписи. Подробности — в разделе «Подпись» ниже.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac
+
+      - name: Отдать установщик
+        uses: actions/upload-artifact@v4
+        with:
+          name: timpoc-setup-macos
+          path: timpoc/installer/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 30
