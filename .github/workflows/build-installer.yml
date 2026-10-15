@@ -1,0 +1,148 @@
+# timpoc — автоматическая сборка установщика и движка.
+#
+# ЗАЧЕМ ЭТОТ ФАЙЛ
+#   Собрать timpoc-setup.exe можно только на Windows: PyInstaller упаковывает
+#   интерпретатор той ОС, где запущен, а electron-builder для NSIS тоже
+#   требует Windows. GitHub Actions даёт бесплатный Windows-раннер, поэтому
+#   сборка происходит сама — вам не нужно ставить ни Python, ни Node.
+#
+# КАК ЗАПУСТИТЬ
+#   1. Создайте репозиторий на github.com и загрузите туда папку timpoc.
+#   2. Этот файл должен лежать по пути .github/workflows/build-installer.yml
+#      ВНИМАНИЕ: в корне репозитория, а не внутри папки timpoc.
+#   3. Вкладка Actions → «Собрать установщик timpoc» → Run workflow.
+#   4. Через 10–15 минут архив с .exe появится в артефактах запуска.
+#
+#   Либо сборка запускается сама при создании тега вида v0.1.0.
+#
+# ПРО ПОДПИСЬ
+#   Без подписи Windows SmartScreen покажет предупреждение «Неизвестный
+#   издатель». Это не отключается настройкой сборки — нужен сертификат
+#   подписи кода. Файл не «сломан», просто не подписан. Для личного
+#   использования достаточно нажать «Подробнее» → «Выполнить в любом случае».
+
+name: Собрать установщик timpoc
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # ------------------------------------------------------------- движок
+  engine-windows:
+    name: Движок (engine.exe) — Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Поставить зависимости
+        working-directory: timpoc/engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      # Проверяем, что движок действительно работает, ДО того как паковать его
+      # в exe. Упаковывать сломанный код — худший сценарий: ошибка всплывёт
+      # уже у пользователя.
+      - name: Прогнать тесты (без распознавания)
+        working-directory: timpoc/engine
+        run: python -m pytest -q -m "not integration"
+
+      - name: Собрать engine.exe
+        working-directory: timpoc/engine
+        run: python -m PyInstaller timpoc_engine.spec --noconfirm
+
+      - name: Проверить, что exe запускается
+        working-directory: timpoc/engine
+        run: .\dist\timpoc-engine\timpoc-engine.exe --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-win
+          path: timpoc/engine/dist/timpoc-engine
+          retention-days: 30
+
+  # --------------------------------------------------------- установщик
+  installer-windows:
+    name: Установщик (timpoc-setup.exe) — Windows
+    runs-on: windows-latest
+    needs: engine-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Прогнать тесты установщика
+        working-directory: timpoc/installer
+        run: node --test test/
+
+      - name: Поставить зависимости
+        working-directory: timpoc/installer
+        run: npm ci || npm install
+
+      # Складываем ресурсы туда, откуда electron-builder их заберёт.
+      - name: Подготовить панель
+        working-directory: timpoc/installer
+        run: |
+          New-Item -ItemType Directory -Force -Path resources\extension | Out-Null
+          Copy-Item -Recurse -Force ..\panel\* resources\extension\
+
+      - name: Забрать движок из предыдущего шага
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-win
+          path: timpoc/installer/resources/engine
+
+      - name: Собрать установщик
+        working-directory: timpoc/installer
+        run: npx electron-builder --win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timpoc-setup-windows
+          path: timpoc/installer/dist/*.exe
+          retention-days: 30
+
+  # ------------------------------------------------------------- macOS
+  installer-macos:
+    name: Установщик (.dmg) — macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Прогнать тесты установщика
+        working-directory: timpoc/installer
+        run: node --test test/
+
+      - name: Поставить зависимости
+        working-directory: timpoc/installer
+        run: npm ci || npm install
+
+      - name: Подготовить панель
+        working-directory: timpoc/installer
+        run: |
+          mkdir -p resources/extension
+          cp -R ../panel/. resources/extension/
+
+      - name: Собрать .dmg
+        working-directory: timpoc/installer
+        run: npx electron-builder --mac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timpoc-setup-macos
+          path: timpoc/installer/dist/*.dmg
+          retention-days: 30
